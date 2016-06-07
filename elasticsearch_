@@ -1,0 +1,224 @@
+#!/usr/bin/env ruby
+
+require 'net/http'
+require 'json'
+
+def fetch(resource)
+  JSON.parse Net::HTTP.get_response(URI.parse("http://#{@host}:#{@port}#{resource}")).body
+end
+
+@host = ENV.member?('host') ? ENV['host'] : 'localhost'
+@port = ENV.member?('port') ? ENV['port'] : 9200
+node = ENV.member?('node') ? ENV['node'] : ''
+
+err = IO.new(2, 'w')
+mode = $0.gsub /.*\/elasticsearch_/, ''
+
+if ARGV[0] == 'config'
+  case mode
+  when 'jvm'
+    puts <<EOT
+graph_title elasticsearch JVM heap
+graph_category elasticsearch
+graph_args --base 1024 -l 0
+graph_vlabel Bytes
+EOT
+    puts <<EOT
+graph_order old_used_in_bytes young_used_in_bytes survivor_used_in_bytes heap_max_in_bytes
+survivor_used_in_bytes.label survivor used bytes
+survivor_used_in_bytes.draw AREA
+young_used_in_bytes.label young used bytes
+young_used_in_bytes.draw AREA
+old_used_in_bytes.label old used bytes
+old_used_in_bytes.draw AREA
+heap_max_in_bytes.label Max heap size
+heap_max_in_bytes.draw LINE2
+EOT
+
+  when 'gc'
+    puts <<EOT
+graph_title elasticsearch GC collection count
+graph_category elasticsearch
+graph_args --base 1000 -l 0
+graph_vlabel Collections per second
+EOT
+    puts <<EOT
+graph_order old_collection_count young_collection_count
+young_collection_count.label GC count young
+young_collection_count.type DERIVE
+young_collection_count.min 0
+young_collection_count.draw LINE2
+old_collection_count.label GC count old
+old_collection_count.type DERIVE
+old_collection_count.min 0
+old_collection_count.draw LINE2
+EOT
+
+  when 'gc_time'
+    puts <<EOT
+graph_title elasticsearch GC collection time
+graph_category elasticsearch
+graph_args --base 1000 -l 0
+graph_vlabel Running time (ms)
+EOT
+    puts <<EOT
+graph_order old_collection_time_in_millis young_collection_time_in_millis
+young_collection_time_in_millis.label Running time young (ms)
+young_collection_time_in_millis.type DERIVE
+young_collection_time_in_millis.min 0
+young_collection_time_in_millis.draw LINE2
+old_collection_time_in_millis.label Running time old (ms)
+old_collection_time_in_millis.type DERIVE
+old_collection_time_in_millis.min 0
+old_collection_time_in_millis.draw LINE2
+EOT
+  when 'cache'
+    puts <<EOT
+graph_title elasticsearch cache
+graph_category elasticsearch
+graph_args --base 1024 -l 0
+graph_vlabel Bytes
+EOT
+    puts <<EOT
+graph_order memory_size_in_bytes
+memory_size_in_bytes.label Query cache
+memory_size_in_bytes.draw LINE2
+EOT
+  when 'docs'
+    puts <<EOT
+graph_title elasticsearch docs
+graph_category elasticsearch
+graph_args --base 1000 -l 0
+graph_vlabel Documents
+EOT
+    puts <<EOT
+graph_order count deleted
+count.label document count
+count.draw LINE2
+deleted.label deleted document count
+deleted.draw LINE2
+EOT
+  when 'ops'
+    puts <<EOT
+graph_title elasticsearch index operations
+graph_category elasticsearch
+graph_args --base 1000 -l 0
+graph_vlabel Operations per second
+EOT
+    puts <<EOT
+graph_order index get search delete merges
+index.label index
+index.type DERIVE
+index.min 0
+index.draw LINE2
+EOT
+    puts <<EOT
+get.label get
+get.type DERIVE
+get.min 0
+get.draw LINE2
+EOT
+    puts <<EOT
+search.label search
+search.type DERIVE
+search.min 0
+search.draw LINE2
+EOT
+    puts <<EOT
+delete.label delete
+delete.type DERIVE
+delete.min 0
+delete.draw LINE2
+EOT
+    puts <<EOT
+merges.label merges
+merges.type DERIVE
+merges.min 0
+merges.draw LINE2
+EOT
+  when 'store'
+    puts <<EOT
+graph_title elasticsearch store
+graph_category elasticsearch
+graph_args --base 1024 -l 0
+graph_vlabel Bytes
+EOT
+    puts <<EOT
+graph_order size
+size.label store size
+size.draw LINE2
+EOT
+  end
+  exit 0
+end
+
+def jvm_stats(node)
+  _k, stats = fetch("/_nodes/#{URI.escape(node)}/stats/jvm")['nodes'].first
+  {
+    memory: {
+      heap_max_in_bytes:      stats['jvm']['mem']['heap_max_in_bytes'],
+      survivor_used_in_bytes: stats['jvm']['mem']['pools']['survivor']['used_in_bytes'],
+      young_used_in_bytes:    stats['jvm']['mem']['pools']['young']['used_in_bytes'],
+      old_used_in_bytes:      stats['jvm']['mem']['pools']['old']['used_in_bytes']
+    },
+    time: {
+      young_collection_time_in_millis:  stats['jvm']['gc']['collectors']['young']['collection_time_in_millis'],
+      old_collection_time_in_millis:    stats['jvm']['gc']['collectors']['old']['collection_time_in_millis'],
+    },
+    count: {
+      young_collection_count:           stats['jvm']['gc']['collectors']['young']['collection_count'],
+      old_collection_count:             stats['jvm']['gc']['collectors']['old']['collection_count']
+    }
+  }
+end
+
+def index_stats(node)
+  _k, stats = fetch("/_nodes/#{URI.escape(node)}/stats/indices")['nodes'].first
+
+  {
+    query_cache: {
+      memory: {
+        memory_size_in_bytes: stats['indices']['query_cache']['memory_size_in_bytes']
+      },
+      count: {
+        hit_count:            stats['indices']['query_cache']['hit_count'],
+        miss_count:           stats['indices']['query_cache']['miss_count'],
+        cache_count:          stats['indices']['query_cache']['cache_count']
+      }
+    },
+
+    indices: {
+      index:  stats['indices']['indexing']['index_total'],
+      get:    stats['indices']['get']['total'],
+      search: stats['indices']['search']['query_total'],
+      delete: stats['indices']['indexing']['delete_total'],
+      merges: stats['indices']['merges']['total'],
+    },
+
+    docs: stats['indices']['docs'],
+    store: {
+      size: stats['indices']['store']['size_in_bytes']
+    }
+  }
+end
+
+data = case mode
+  when 'jvm'
+    jvm_stats(node)[:memory]
+  when 'gc'
+    jvm_stats(node)[:count]
+  when 'gc_time'
+    jvm_stats(node)[:time]
+  when 'cache'
+    index_stats(node)[:query_cache][:memory]
+  when 'docs'
+    index_stats(node)[:docs]
+  when 'ops'
+    index_stats(node)[:indices]
+  when 'store'
+    index_stats(node)[:store]
+end
+
+data.each do |k, v|
+  puts "#{k}.value #{v}"
+end
