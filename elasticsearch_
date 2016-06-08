@@ -25,12 +25,12 @@ graph_vlabel Bytes
 EOT
     puts <<EOT
 graph_order old_used_in_bytes young_used_in_bytes survivor_used_in_bytes heap_max_in_bytes
-survivor_used_in_bytes.label survivor used bytes
-survivor_used_in_bytes.draw AREA
-young_used_in_bytes.label young used bytes
-young_used_in_bytes.draw AREA
 old_used_in_bytes.label old used bytes
 old_used_in_bytes.draw AREA
+young_used_in_bytes.label young used bytes
+young_used_in_bytes.draw STACK
+survivor_used_in_bytes.label survivor used bytes
+survivor_used_in_bytes.draw STACK
 heap_max_in_bytes.label Max heap size
 heap_max_in_bytes.draw LINE2
 EOT
